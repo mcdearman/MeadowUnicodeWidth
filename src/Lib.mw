@@ -1,0 +1,31 @@
+-- unicodeWidth: how many columns a character or a string takes in a terminal.
+--
+-- A port of Rust's `unicode-width` crate, version 0.2.2, following Unicode
+-- Standard Annex #11 and the refinements the crate makes to it: emoji
+-- sequences, variation selectors, ligatures and the rest. The tables are the
+-- crate's own, generated from it by `scripts/generate.sh`, and the tests hold
+-- this port to the widths the crate gives for tens of thousands of inputs.
+--
+--   use unicodeWidth (width, charWidth)
+--
+--   width "日本語"          -- 6
+--   width "👨‍👩‍👧"            -- 2: one emoji, however many code points
+--   charWidth '\u{7}'     -- None: a control character has no width
+--
+-- Each function has a `Cjk` twin for East Asian contexts, where characters of
+-- ambiguous width (`East_Asian_Width=Ambiguous`, such as `○` or `§`) are two
+-- columns rather than one.
+--
+-- As with the crate, these are the widths a terminal is *likely* to use: no
+-- specification binds terminals, and some differ.
+
+mod Tables
+mod Lookup
+mod Machine
+mod Width
+@cfg(test)
+mod Cases
+@cfg(test)
+mod Tests
+
+@pub use unicodeWidth.Width (charWidth, charWidthCjk, width, widthCjk, unicodeVersion)

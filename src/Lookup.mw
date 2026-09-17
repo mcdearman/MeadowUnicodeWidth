@@ -1,0 +1,104 @@
+-- Reading the tables in `Tables.mw`.
+--
+-- Each table is a string of fixed-width records whose fields are base-64
+-- digits, `'0'` standing for 0 up to `'o'` for 63, most significant first. A
+-- digit is one byte, and `stringByteAt` reads a byte in constant time, so a
+-- field costs a few subtractions and the tables are never unpacked.
+--
+-- The widths come from the crate's three-level trie, exactly as it stores
+-- them: constant time per character, whatever the character. Only the few
+-- code points the trie marks as special, and the predicates that the state
+-- machine asks about in rare contexts, are binary-searched.
+--
+-- Copyright 2012-2025 The Rust Project Developers, and the Meadow port's
+-- authors. Dual-licensed under Apache-2.0 or MIT: see COPYRIGHT.
+
+use unicodeWidth.Tables
+
+-- --- fields ------------------------------------------------------------------------
+
+-- The digit at byte `i`. `toInt` first: a byte is a `UInt8`, and arithmetic on
+-- it would wrap at 256.
+fun digit s i = toInt (stringByteAt s i) - 48
+
+-- The two-digit field at `i`: one byte of the crate's tables.
+fun byte s i = digit s i * 64 + digit s (i + 1)
+
+-- The four-digit field at `i`: a code point.
+fun codePoint s i = byte s i * 4096 + byte s (i + 2)
+
+-- --- range tables -------------------------------------------------------------------
+
+-- Where the record holding `cp` starts in `table`, whose records are `size`
+-- digits and start with `lo hi`; or `0 - 1` when no record holds it.
+fun searchFrom table size cp lo hi =
+  if lo >= hi then 0 - 1
+  else
+    let mid = (lo + hi) / 2 in
+    let at = mid * size in
+    if cp < codePoint table at then searchFrom table size cp lo mid
+    else if cp > codePoint table (at + 4) then searchFrom table size cp (mid + 1) hi
+    else at
+
+fun search table size cp = searchFrom table size cp 0 (stringByteLength table / size)
+
+-- Whether a `lo hi` range in `table` holds `cp`.
+fun inRanges table cp = search table 8 cp >= 0
+
+-- --- widths ---------------------------------------------------------------------------
+
+-- What the trie under `root` says of `cp`: its width, 0 to 2, or 3 for "see
+-- the special cases".
+fun trie root cp =
+  let middle = byte root (2 * (cp >> 13)) in
+  let leaf = byte widthMiddle (2 * (middle * 64 + bitAnd (cp >> 7) 63)) in
+  let packed = byte widthLeaves (2 * (leaf * 32 + bitAnd (cp >> 2) 31)) in
+  bitAnd (packed >> (2 * bitAnd cp 3)) 3
+
+-- A special case from `table`: the width, and what the state machine needs to
+-- know about the character.
+--
+-- Every code point the trie marks has a record, so the fallback -- the crate's
+-- last arm, a wide emoji -- is never taken.
+fun special table cp =
+  let at = search table 12 cp in
+  if at < 0
+  then (2, 5)
+  else (digit table (at + 8), byte table (at + 9) * 64 + digit table (at + 11))
+
+-- The width of the code point `cp` on its own, with the information the state
+-- machine keeps about it: the crate's `lookup_width`.
+@pub(pkg) fun lookupWidth cp =
+  let w = trie widthRoot cp in
+  if w < 3 then (w, 0) else special specials cp
+
+-- The same in an East Asian context: `lookup_width_cjk`.
+@pub(pkg) fun lookupWidthCjk cp =
+  let w = trie widthRootCjk cp in
+  if w < 3 then (w, 0) else special specialsCjk cp
+
+-- --- predicates -----------------------------------------------------------------------
+
+-- Whether `cp` followed by U+FE0F is an emoji presentation sequence.
+@pub(pkg) fun startsEmojiPresentationSeq cp = inRanges emojiPresentation cp
+
+-- Whether `cp` is emoji by default, not ideographic, and followed by U+FE0E
+-- makes a text presentation sequence.
+@pub(pkg) fun startsTextPresentationSeq cp = inRanges textPresentation cp
+
+@pub(pkg) fun isEmojiModifierBase cp = inRanges emojiModifierBase cp
+
+-- Whether `cp` is a default-ignorable combining mark or ZWJ, which does not
+-- interrupt a non-Arabic ligature.
+@pub(pkg) fun isLigatureTransparent cp = inRanges ligatureTransparent cp
+
+-- Whether `cp` is zero-width with `Joining_Type=Transparent`: what may come
+-- between the halves of a lam-alef ligature.
+@pub(pkg) fun isTransparentZeroWidth cp =
+  match lookupWidth cp with
+  | (0, _) -> not (inRanges nonTransparentZeroWidths cp)
+  | _ -> False
+
+-- Whether `cp` leaves U+0338 COMBINING LONG SOLIDUS OVERLAY acting on its base.
+@pub(pkg) fun isSolidusTransparent cp =
+  isLigatureTransparent cp or inRanges solidusTransparent cp

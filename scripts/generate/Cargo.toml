@@ -1,0 +1,25 @@
+# Generates `src/Tables.mw` and `src/Cases.mw` from the `unicode-width` crate.
+#
+# Not part of the Meadow package: a tool for its maintainer, run through
+# `scripts/generate.sh`. The version below is the one ported; moving it is how
+# the port follows a new Unicode release.
+
+[package]
+name = "generate"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[features]
+# `tables.rs` compiles its CJK half only under this feature, and the port has
+# both halves.
+default = ["cjk"]
+cjk = []
+
+[dependencies]
+unicode-width = { version = "=0.2.2", features = ["cjk"] }
+
+[build-dependencies]
+serde_json = "1"

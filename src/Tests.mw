@@ -1,0 +1,71 @@
+-- The port against the crate: every case in `Cases.mw`, whose expected widths
+-- came from calling the crate itself, plus a few examples to read.
+--
+-- Every declaration carries `@cfg(test)`, not just the `mod Tests` in `Lib.mw`:
+-- the file is compiled in an ordinary build too, where `Cases` is empty.
+
+@cfg(test)
+use Std.Test (assertEq)
+@cfg(test)
+use Std.Collections.List.List (Nil)
+@cfg(test)
+use unicodeWidth.Cases (strCases, charCases)
+@cfg(test)
+use unicodeWidth.Width (width, widthCjk, charWidth, charWidthCjk, unicodeVersion)
+
+@cfg(test)
+fun digit s i = toInt (stringByteAt s i) - 48
+
+@cfg(test)
+fun field s i n = if n == 0 then 0 else field s i (n - 1) * 64 + digit s (i + n - 1)
+
+-- The failures among the string cases from byte `at`, most recent first.
+@cfg(test)
+fun checkStrings at bad =
+  if at >= stringByteLength strCases
+  then bad
+  else
+    let len = field strCases (at + 4) 3 in
+    let s = stringSlice strCases (at + 7) (at + 7 + len) in
+    let expected = (field strCases at 2, field strCases (at + 2) 2) in
+    let actual = (width s, widthCjk s) in
+    let bad2 = if actual == expected then bad else (s, expected, actual) :: bad in
+    checkStrings (at + 7 + len) bad2
+
+@cfg(test)
+fun decodeWidth n = if n == 0 then None else Just (n - 1)
+
+@cfg(test)
+fun checkChars at bad =
+  if at >= stringByteLength charCases
+  then bad
+  else
+    let c = charFromCode (field charCases at 4) in
+    let narrow = decodeWidth (digit charCases (at + 4)) in
+    let wide = decodeWidth (digit charCases (at + 5)) in
+    let expected = (narrow, wide) in
+    let actual = (charWidth c, charWidthCjk c) in
+    let bad2 = if actual == expected then bad else (c, expected, actual) :: bad in
+    checkChars (at + 6) bad2
+
+-- Failures are listed as (input, expected, actual), the widths as (narrow, CJK).
+@cfg(test)
+@test fun stringsMatchTheCrate () =
+  assertEq (checkStrings 0 Nil) Nil "strings whose widths differ from the crate's"
+
+@cfg(test)
+@test fun charactersMatchTheCrate () =
+  assertEq (checkChars 0 Nil) Nil "characters whose widths differ from the crate's"
+
+@cfg(test)
+@test fun examples () =
+  let a = assertEq (width "hello") 5 "ascii" in
+  let b = assertEq (width "日本語") 6 "wide" in
+  let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}" in
+  let c = assertEq (width family) 2 "a ZWJ sequence is one emoji" in
+  let d = assertEq (charWidth '\u{7}') None "a control character" in
+  let e = assertEq (charWidth '○') (Just 1) "ambiguous is narrow" in
+  let f = assertEq (charWidthCjk '○') (Just 2) "ambiguous is wide in CJK" in
+  let g = assertEq (width "\u{1F1FA}\u{1F1F8}") 2 "a flag" in
+  let h = assertEq (width "\r\n") 1 "CR LF is one column" in
+  assertEq unicodeVersion (17, 0, 0) "unicode version"

@@ -1,0 +1,38 @@
+-- The package's surface, re-exported by `Lib.mw`. It lives here rather than in
+-- the root module so that `Tests.mw` can reach it.
+
+use unicodeWidth.Tables as T
+use unicodeWidth.Lookup (lookupWidth, lookupWidthCjk)
+use unicodeWidth.Machine (strWidth)
+
+fun first pair =
+  match pair with
+  | (w, _) -> w
+
+fun single lookup c =
+  let cp = charCode c in
+  if cp < 0x7F
+  then (if cp >= 0x20 then Just 1 else None)
+  else if cp >= 0xA0
+  then Just (first (lookup cp))
+  else None
+
+-- The columns `c` takes on its own, or `None` for a control character.
+-- Characters of ambiguous width are narrow.
+--
+-- A character's width in a string can differ -- a variation selector after it,
+-- say -- so for text, use `width`, not a sum of these.
+@pub fun charWidth c = single lookupWidth c
+
+-- The same, in an East Asian context: characters of ambiguous width are wide.
+@pub fun charWidthCjk c = single lookupWidthCjk c
+
+-- The columns `s` takes. Control characters count as one column each, as the
+-- crate counts them; characters of ambiguous width are narrow.
+@pub fun width s = strWidth False s
+
+-- The same, in an East Asian context: characters of ambiguous width are wide.
+@pub fun widthCjk s = strWidth True s
+
+-- The version of Unicode the tables follow, as `(major, minor, update)`.
+@pub def unicodeVersion = T.unicodeVersion

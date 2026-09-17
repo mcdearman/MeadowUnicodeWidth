@@ -1,0 +1,318 @@
+-- The width of a string: the crate's `str_width` and `str_width_cjk`.
+--
+-- A string is not the sum of its characters' widths: an emoji sequence joined
+-- with ZWJ is one wide glyph, a variation selector changes the width of the
+-- character before it, a lam-alef pair is one ligature, and so on. So the
+-- string is read from the end with a little state -- what the characters after
+-- this one have started -- and each character adds a width, which may be
+-- negative, given that state.
+--
+-- This is a port of `width_in_str` and `width_in_str_cjk` in the crate's
+-- `src/tables.rs`, arm for arm and in the same order. The two differ in a few
+-- places, so they are one function here that takes `cjk`. The generator
+-- refuses to run on a crate whose state machine differs from the one ported;
+-- see `scripts/generate/src/main.rs`.
+--
+-- Copyright 2012-2025 The Rust Project Developers, and the Meadow port's
+-- authors. Dual-licensed under Apache-2.0 or MIT: see COPYRIGHT.
+
+use unicodeWidth.Lookup
+
+-- --- the state ---------------------------------------------------------------------
+--
+-- The crate's `WidthInfo`: a 16-bit value, some of whose bits have meanings of
+-- their own.
+
+def infoDefault = 0
+def lineFeed = 0x0001
+def emojiModifier = 0x0002
+def regionalIndicator = 0x0003
+def severalRegionalIndicator = 0x0004
+def emojiPresentation = 0x0005
+def zwjEmojiPresentation = 0x1006
+def vs16ZwjEmojiPresentation = 0x9006
+def keycapZwjEmojiPresentation = 0x1007
+def vs16KeycapZwjEmojiPresentation = 0x9007
+def regionalIndicatorZwjPresentation = 0x0009
+def evenRegionalIndicatorZwjPresentation = 0x000A
+def oddRegionalIndicatorZwjPresentation = 0x000B
+def tagEnd = 0x0010
+def tagD1 = 0x0011
+def tagD2 = 0x0012
+def tagD3 = 0x0013
+def tagA1 = 0x0019
+def tagA2 = 0x001A
+def tagA3 = 0x001B
+def tagA4 = 0x001C
+def tagA5 = 0x001D
+def tagA6 = 0x001E
+def kiratRaiVowelSignE = 0x0020
+def kiratRaiVowelSignAi = 0x0021
+def variationSelector123 = 0x0200
+def variationSelector15 = 0x4000
+def variationSelector16 = 0x8000
+def joiningGroupAlef = 0x30FF
+def combiningLongSolidusOverlay = 0x3CFF
+def solidusOverlayAlef = 0x38FF
+def zwjHebrewLetterLamed = 0x3C00
+def zwjBugineseLetterYa = 0x3C01
+def bugineseVowelSignIZwjLetterYa = 0x3C02
+def tifinaghConsonant = 0x3803
+def zwjTifinaghConsonant = 0x3C03
+def tifinaghJoinerConsonant = 0x3C04
+def lisuToneLetterMyaNaJeu = 0x3C05
+def zwjOldTurkicLetterOrkhonI = 0x3C06
+def khmerCoengEligibleLetter = 0x3C07
+
+def ligatureTransparentMask = 0x2000
+
+fun has info bits = bitAnd info bits == bits
+
+fun infoIsLigatureTransparent info = has info 0x0800
+
+fun setZwjBit info = bitOr info 0x0400
+
+fun infoIsEmojiPresentation info = has info variationSelector16
+
+fun isZwjEmojiPresentation info = bitAnd info 0xB000 == 0x9000
+
+-- The crate writes `info | VS16 & !VS15 & !VS1_2_3`, in which `&` binds
+-- tighter: the other selectors' bits are not cleared, and neither are they here.
+fun setEmojiPresentation info =
+  if has info ligatureTransparentMask or bitAnd info 0x9000 == 0x1000
+  then bitOr info variationSelector16
+  else variationSelector16
+
+fun unsetEmojiPresentation info =
+  if has info ligatureTransparentMask
+  then bitAnd info (bitNot variationSelector16)
+  else infoDefault
+
+fun isTextPresentation info = has info variationSelector15
+
+fun setTextPresentation info =
+  if has info ligatureTransparentMask
+  then bitOr info variationSelector15
+  else variationSelector15
+
+fun unsetTextPresentation info = bitAnd info (bitNot variationSelector15)
+
+fun isVs123 info = has info variationSelector123
+
+fun setVs123 info =
+  if has info ligatureTransparentMask
+  then bitOr info variationSelector123
+  else variationSelector123
+
+fun unsetVs123 info = bitAnd info (bitNot variationSelector123)
+
+-- --- characters ---------------------------------------------------------------------
+
+fun between lo hi cp = cp >= lo and cp <= hi
+
+fun isRegionalIndicator cp = between 0x1F1E6 0x1F1FF cp
+
+fun isTagLetter cp = between 0xE0061 0xE007A cp
+
+fun isTagDigit cp = between 0xE0030 0xE0039 cp
+
+fun isTifinaghLetter cp = between 0x2D31 0x2D65 cp or cp == 0x2D6F
+
+-- The letters that make a ligature with a preceding alef: lam and its variants.
+fun isLam cp = cp == 0x644 or between 0x6B5 0x6B8 cp or cp == 0x76A or cp == 0x8A6 or cp == 0x8C7
+
+-- The quotation marks a VS1, VS2 or VS3 selects a width for.
+fun isQuote cp = cp == 0x2018 or cp == 0x2019 or cp == 0x201C or cp == 0x201D
+
+-- States in which a ZWJ continues an emoji sequence.
+fun joinsEmoji info =
+  info == emojiPresentation
+    or info == severalRegionalIndicator
+    or info == evenRegionalIndicatorZwjPresentation
+    or info == oddRegionalIndicatorZwjPresentation
+    or info == emojiModifier
+
+-- States in which a regional indicator pairs with the one after it.
+fun pairsRegionalIndicator info =
+  info == regionalIndicatorZwjPresentation or info == oddRegionalIndicatorZwjPresentation
+
+-- States in which a tag digit may come before the tag letters or digits seen.
+fun takesTagDigit info =
+  info == tagEnd or info == tagA1 or info == tagA2 or info == tagA3 or info == tagA4
+
+-- States in which U+1F3F4 WAVING BLACK FLAG completes a tag sequence.
+fun endsTagSequence info =
+  info == tagA3 or info == tagA4 or info == tagA5 or info == tagA6 or info == tagD3
+
+-- States in which U+0338 COMBINING LONG SOLIDUS OVERLAY is still acting: on
+-- `<`, `=` or `>` it makes a wide negated relation.
+fun overlaysSolidus info = info == combiningLongSolidusOverlay or info == solidusOverlayAlef
+
+-- What a keycap sequence may start with.
+fun isKeycapBase cp = between 0x30 0x39 cp or cp == 0x23 or cp == 0x2A
+
+fun lookup cjk cp = if cjk then lookupWidthCjk cp else lookupWidth cp
+
+fun widthOf pair =
+  match pair with
+  | (w, _) -> w
+
+fun infoOf pair =
+  match pair with
+  | (_, i) -> i
+
+-- --- the machine ----------------------------------------------------------------------
+
+-- The arms of the crate's `match (next_info, c)`, first match winning, and the
+-- plain lookup when none does.
+fun arms cjk cp info =
+  if cjk and info == combiningLongSolidusOverlay and isSolidusTransparent cp
+  then (widthOf (lookupWidthCjk cp), combiningLongSolidusOverlay)
+  else if cjk and info == joiningGroupAlef and cp == 0x338
+  then (0, solidusOverlayAlef)
+  else if (info == joiningGroupAlef or (cjk and info == solidusOverlayAlef)) and isLam cp
+  then (0, infoDefault)
+  else if info == joiningGroupAlef and isTransparentZeroWidth cp
+  then (0, joiningGroupAlef)
+  else if info == zwjHebrewLetterLamed and cp == 0x5D0
+  then (0, infoDefault)
+  else if info == khmerCoengEligibleLetter and cp == 0x17D2
+  then (0 - 1, infoDefault)
+  else if info == zwjBugineseLetterYa and cp == 0x1A17
+  then (0, bugineseVowelSignIZwjLetterYa)
+  else if info == bugineseVowelSignIZwjLetterYa and cp == 0x1A15
+  then (0, infoDefault)
+  else if (info == tifinaghConsonant or info == zwjTifinaghConsonant) and cp == 0x2D7F
+  then (1, tifinaghJoinerConsonant)
+  else if info == zwjTifinaghConsonant and isTifinaghLetter cp
+  then (0, infoDefault)
+  else if info == tifinaghJoinerConsonant and isTifinaghLetter cp
+  then (0 - 1, infoDefault)
+  else if info == lisuToneLetterMyaNaJeu and between 0xA4F8 0xA4FB cp
+  then (0, infoDefault)
+  else if info == zwjOldTurkicLetterOrkhonI and cp == 0x10C32
+  then (0, infoDefault)
+  else if info == emojiModifier and isEmojiModifierBase cp
+  then (0, emojiPresentation)
+  else if (info == regionalIndicator or info == severalRegionalIndicator) and isRegionalIndicator cp
+  then (1, severalRegionalIndicator)
+  else if cp == 0x200D and joinsEmoji info
+  then (0, zwjEmojiPresentation)
+  else if info == zwjEmojiPresentation and cp == 0x20E3
+  then (0, keycapZwjEmojiPresentation)
+  else if info == vs16ZwjEmojiPresentation and startsEmojiPresentationSeq cp
+  then (0, emojiPresentation)
+  else if info == vs16KeycapZwjEmojiPresentation and isKeycapBase cp
+  then (0, emojiPresentation)
+  else if info == zwjEmojiPresentation and isRegionalIndicator cp
+  then (1, regionalIndicatorZwjPresentation)
+  else if pairsRegionalIndicator info and isRegionalIndicator cp
+  then (0 - 1, evenRegionalIndicatorZwjPresentation)
+  else if info == evenRegionalIndicatorZwjPresentation and isRegionalIndicator cp
+  then (3, oddRegionalIndicatorZwjPresentation)
+  else if info == zwjEmojiPresentation and between 0x1F3FB 0x1F3FF cp
+  then (0, emojiModifier)
+  else if info == zwjEmojiPresentation and cp == 0xE007F
+  then (0, tagEnd)
+  else if info == tagEnd and isTagLetter cp
+  then (0, tagA1)
+  else if info == tagA1 and isTagLetter cp
+  then (0, tagA2)
+  else if info == tagA2 and isTagLetter cp
+  then (0, tagA3)
+  else if info == tagA3 and isTagLetter cp
+  then (0, tagA4)
+  else if info == tagA4 and isTagLetter cp
+  then (0, tagA5)
+  else if info == tagA5 and isTagLetter cp
+  then (0, tagA6)
+  else if isTagDigit cp and takesTagDigit info
+  then (0, tagD1)
+  else if info == tagD1 and isTagDigit cp
+  then (0, tagD2)
+  else if info == tagD2 and isTagDigit cp
+  then (0, tagD3)
+  else if cp == 0x1F3F4 and endsTagSequence info
+  then (0, emojiPresentation)
+  else if info == zwjEmojiPresentation and infoOf (lookup cjk cp) == emojiPresentation
+  then (0, emojiPresentation)
+  else if info == kiratRaiVowelSignE and cp == 0x16D63
+  then (0, infoDefault)
+  else if info == kiratRaiVowelSignE and cp == 0x16D67
+  then (0, kiratRaiVowelSignAi)
+  else if info == kiratRaiVowelSignE and cp == 0x16D68
+  then (1, kiratRaiVowelSignE)
+  else if info == kiratRaiVowelSignE and cp == 0x16D69
+  then (0, infoDefault)
+  else if info == kiratRaiVowelSignAi and cp == 0x16D63
+  then (0, infoDefault)
+  else lookup cjk cp
+
+-- Characters that do not interrupt a ligature pass the state through.
+fun ligature cjk cp info =
+  if infoIsLigatureTransparent info and cp == 0x200D
+  then (0, setZwjBit info)
+  else if infoIsLigatureTransparent info and isLigatureTransparent cp
+  then (0, info)
+  else arms cjk cp info
+
+-- A character that a variation selector follows. Text presentation (U+FE0E)
+-- exists only outside East Asian contexts, where no state ever carries it.
+fun selected cjk cp info =
+  if not cjk and isTextPresentation info
+  then
+    if startsTextPresentationSeq cp
+    then (1, infoDefault)
+    else ligature cjk cp (unsetTextPresentation info)
+  else if isVs123 info
+  then
+    if isQuote cp
+    then ((if cjk then 1 else 2), infoDefault)
+    else ligature cjk cp (unsetVs123 info)
+  else ligature cjk cp info
+
+-- A character above U+00A0, when something after it has left a state.
+fun inSequence cjk cp info =
+  if cp == 0xFE0F
+  then (0, setEmojiPresentation info)
+  else if (if cjk then cp == 0xFE00 or cp == 0xFE02 else cp == 0xFE01)
+  then (0, setVs123 info)
+  else if not cjk and cp == 0xFE0E
+  then (0, setTextPresentation info)
+  else selected cjk cp info
+
+-- What `cp` adds to the width of a string, given `next`, what the characters
+-- after it left; and what it leaves for the character before it.
+fun afterEmoji cjk cp info =
+  if cjk and overlaysSolidus info and (cp == 0x3C or cp == 0x3D or cp == 0x3E)
+  then (2, infoDefault)
+  else if cp <= 0xA0
+  then
+    if cp == 0x0A
+    then (1, lineFeed)
+    else if cp == 0x0D and info == lineFeed
+    then (0, infoDefault)
+    else (1, infoDefault)
+  else if info == infoDefault
+  then lookup cjk cp
+  else inSequence cjk cp info
+
+fun step cjk cp next =
+  if infoIsEmojiPresentation next
+  then
+    if startsEmojiPresentationSeq cp
+    then ((if isZwjEmojiPresentation next then 0 else 2), emojiPresentation)
+    else afterEmoji cjk cp (unsetEmojiPresentation next)
+  else afterEmoji cjk cp next
+
+fun widthFrom cjk chars i sum next =
+  if i < 0
+  then sum
+  else
+    match step cjk (charCode (arrayGet chars i)) next with
+    | (add, info) -> widthFrom cjk chars (i - 1) (sum + add) info
+
+-- The width of `s`, in an East Asian context when `cjk`.
+@pub(pkg) fun strWidth cjk s =
+  let chars = stringToChars s in
+  widthFrom cjk chars (arrayLen chars - 1) 0 infoDefault
