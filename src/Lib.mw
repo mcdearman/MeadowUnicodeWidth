@@ -6,7 +6,7 @@
 -- crate's own, generated from it by `scripts/generate.sh`, and the tests hold
 -- this port to the widths the crate gives for tens of thousands of inputs.
 --
---   use unicodeWidth (width, charWidth)
+--   use UnicodeWidth (width, charWidth)
 --
 --   width "日本語"          -- 6
 --   width "👨‍👩‍👧"            -- 2: one emoji, however many code points
@@ -28,4 +28,4 @@ mod Cases
 @cfg(test)
 mod Tests
 
-@pub use unicodeWidth.Width (charWidth, charWidthCjk, width, widthCjk, unicodeVersion)
+@pub use UnicodeWidth.Width (charWidth, charWidthCjk, width, widthCjk, unicodeVersion)

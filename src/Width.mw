@@ -1,9 +1,9 @@
 -- The package's surface, re-exported by `Lib.mw`. It lives here rather than in
 -- the root module so that `Tests.mw` can reach it.
 
-use unicodeWidth.Tables as T
-use unicodeWidth.Lookup (lookupWidth, lookupWidthCjk)
-use unicodeWidth.Machine (strWidth)
+use UnicodeWidth.Tables as T
+use UnicodeWidth.Lookup (lookupWidth, lookupWidthCjk)
+use UnicodeWidth.Machine (strWidth)
 
 fun first pair =
   match pair with

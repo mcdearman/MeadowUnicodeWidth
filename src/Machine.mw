@@ -16,7 +16,7 @@
 -- Copyright 2012-2025 The Rust Project Developers, and the Meadow port's
 -- authors. Dual-licensed under Apache-2.0 or MIT: see COPYRIGHT.
 
-use unicodeWidth.Lookup
+use UnicodeWidth.Lookup
 
 -- --- the state ---------------------------------------------------------------------
 --

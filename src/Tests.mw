@@ -9,9 +9,9 @@ use Std.Test (assertEq)
 @cfg(test)
 use Std.Collections.List.List (Nil)
 @cfg(test)
-use unicodeWidth.Cases (strCases, charCases)
+use UnicodeWidth.Cases (strCases, charCases)
 @cfg(test)
-use unicodeWidth.Width (width, widthCjk, charWidth, charWidthCjk, unicodeVersion)
+use UnicodeWidth.Width (width, widthCjk, charWidth, charWidthCjk, unicodeVersion)
 
 @cfg(test)
 fun digit s i = toInt (stringByteAt s i) - 48
