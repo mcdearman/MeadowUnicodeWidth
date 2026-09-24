@@ -12,7 +12,7 @@ selectors, `\r\n`, Arabic lam-alef ligatures, and others.
 ## Install
 
 ```sh
-meadow add mcdearman/MeadowUnicodeWidth
+meadow add mcdearman/UnicodeWidth
 ```
 
 ## Use
